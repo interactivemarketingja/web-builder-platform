@@ -1,20 +1,29 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import {
+  AlertCircle,
   Check,
+  CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Copy,
   CreditCard,
+  Download,
   ExternalLink,
+  ImageOff,
   Link2,
   Megaphone,
   Pause,
   Play,
   Rocket,
+  Search,
   Sparkles,
   Tag,
   Target,
+  Trash2,
 } from 'lucide-react';
 import { slugify } from '../data/presets';
 import {
+  AnalyticsPayload,
   DeployedSiteRecord,
   MarketingAdKit,
   MarketingOrderRecord,
@@ -28,11 +37,13 @@ interface MarketingViewProps {
   project: SiteProject;
   onUpdateMarketing: (patch: Partial<SiteMarketingConfig>) => void;
   onOpenDeploy: () => void;
+  onNotify?: (message: string) => void;
   initialSessionId?: string | null;
   onClearSessionParam?: () => void;
 }
 
 type MarketingSubTab = 'launch' | 'kit' | 'tracking' | 'orders';
+type OrderStatusFilter = 'all' | MarketingOrderStatus;
 
 interface MarketingPackageDef {
   id: MarketingPackageId;
@@ -52,7 +63,7 @@ const MARKETING_PACKAGES: MarketingPackageDef[] = [
     tagline: 'Technical SEO setup, Schema.org markup & Google Search ad pack',
     priceUsd: 149,
     billingType: 'one_time',
-    defaultBudgetUsd: 100,
+    defaultBudgetUsd: 150,
     deliverables: [
       'Google Search Console & sitemap submission checklist',
       'Schema.org JSON-LD + OpenGraph meta optimization',
@@ -119,6 +130,15 @@ const GOAL_OPTIONS = [
   'Local Traffic & Footfall',
 ];
 
+const TONE_OPTIONS = [
+  'Direct & Authoritative',
+  'Executive B2B',
+  'Warm & Founder-Led',
+  'Urgent Launch Offer',
+];
+
+const BUDGET_PRESETS = [100, 300, 750, 1500];
+
 function formatStatusLabel(status: MarketingOrderStatus): string {
   switch (status) {
     case 'pending_payment':
@@ -134,10 +154,75 @@ function formatStatusLabel(status: MarketingOrderStatus): string {
   }
 }
 
+function validateGa4(val?: string): 'empty' | 'valid' | 'invalid' {
+  const clean = (val || '').trim();
+  if (!clean) return 'empty';
+  return /^G-[A-Z0-9]{4,18}$/i.test(clean) ? 'valid' : 'invalid';
+}
+
+function validateGoogleAds(val?: string): 'empty' | 'valid' | 'invalid' {
+  const clean = (val || '').trim();
+  if (!clean) return 'empty';
+  return /^AW-[A-Z0-9]{4,18}$/i.test(clean) ? 'valid' : 'invalid';
+}
+
+function validateMetaPixel(val?: string): 'empty' | 'valid' | 'invalid' {
+  const clean = (val || '').trim();
+  if (!clean) return 'empty';
+  return /^\d{8,22}$/.test(clean) ? 'valid' : 'invalid';
+}
+
+function validateLinkedIn(val?: string): 'empty' | 'valid' | 'invalid' {
+  const clean = (val || '').trim();
+  if (!clean) return 'empty';
+  return /^\d{4,16}$/.test(clean) ? 'valid' : 'invalid';
+}
+
+function buildKitMarkdown(siteName: string, kit: MarketingAdKit): string {
+  return [
+    `# Marketing Campaign Kit — ${siteName}`,
+    '',
+    `## Strategy Summary`,
+    kit.summary,
+    '',
+    `## Target Keywords`,
+    kit.targetKeywords.map((k) => `- ${k}`).join('\n'),
+    '',
+    `## Google Search Responsive Ad`,
+    `### Headlines`,
+    kit.googleSearchAd.headlines.map((h) => `- ${h}`).join('\n'),
+    `### Descriptions`,
+    kit.googleSearchAd.descriptions.map((d) => `- ${d}`).join('\n'),
+    '',
+    `## Meta (Instagram & Facebook) Ad`,
+    `**Headline:** ${kit.metaSocialAd.headline}`,
+    `**CTA:** ${kit.metaSocialAd.callToAction}`,
+    '',
+    kit.metaSocialAd.primaryText,
+    '',
+    `## LinkedIn Sponsored Post`,
+    `**Hook:** ${kit.linkedinPost.hook}`,
+    '',
+    kit.linkedinPost.body,
+    '',
+    `**CTA:** ${kit.linkedinPost.cta}`,
+    '',
+    `## Email Launch Broadcast`,
+    `**Subject:** ${kit.emailBroadcast.subject}`,
+    `**Preview:** ${kit.emailBroadcast.previewText}`,
+    '',
+    kit.emailBroadcast.body,
+    '',
+    `## 7-Day Launch Checklist`,
+    kit.launchChecklist.map((step, i) => `${i + 1}. ${step}`).join('\n'),
+  ].join('\n');
+}
+
 export const MarketingView: React.FC<MarketingViewProps> = ({
   project,
   onUpdateMarketing,
   onOpenDeploy,
+  onNotify,
   initialSessionId,
   onClearSessionParam,
 }) => {
@@ -145,6 +230,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
   const [stripeConfigured, setStripeConfigured] = useState(false);
   const [deployments, setDeployments] = useState<DeployedSiteRecord[]>([]);
   const [orders, setOrders] = useState<MarketingOrderRecord[]>([]);
+  const [analytics, setAnalytics] = useState<AnalyticsPayload | null>(null);
 
   // Launch & Checkout Form
   const [targetSlug, setTargetSlug] = useState(() =>
@@ -159,16 +245,20 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
   ]);
   const [campaignGoal, setCampaignGoal] = useState(GOAL_OPTIONS[0]);
   const [targetAudience, setTargetAudience] = useState('');
+  const [offerHook, setOfferHook] = useState('');
   const [customerEmail, setCustomerEmail] = useState('');
   const [isSubmittingOrder, setIsSubmittingOrder] = useState(false);
   const [orderError, setOrderError] = useState<string | null>(null);
   const [orderNotice, setOrderNotice] = useState<string | null>(null);
   const [pendingCheckoutUrl, setPendingCheckoutUrl] = useState<string | null>(null);
 
-  // AI Ad Kit state
-  const [adKit, setAdKit] = useState<MarketingAdKit | null>(null);
+  // AI Ad Kit state (persisted in project.marketing.savedKit)
+  const adKit = project.marketing?.savedKit || null;
+  const campaignTone = project.marketing?.campaignTone || TONE_OPTIONS[0];
   const [isGeneratingKit, setIsGeneratingKit] = useState(false);
   const [kitError, setKitError] = useState<string | null>(null);
+  const [checkedSteps, setCheckedSteps] = useState<Record<number, boolean>>({});
+  const [previewHeadlineIdx, setPreviewHeadlineIdx] = useState(0);
 
   // UTM Builder state
   const [utmSource, setUtmSource] = useState('google');
@@ -176,7 +266,13 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
   const [utmCampaign, setUtmCampaign] = useState(() =>
     slugify(`${project.slug || project.name}-launch`)
   );
+  const [utmContent, setUtmContent] = useState('');
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  // Orders Ledger filter & expandable drawer
+  const [orderSearch, setOrderSearch] = useState('');
+  const [statusFilter, setStatusFilter] = useState<OrderStatusFilter>('all');
+  const [expandedOrderKitId, setExpandedOrderKitId] = useState<string | null>(null);
 
   const selectedPkg =
     MARKETING_PACKAGES.find((p) => p.id === selectedPackageId) ||
@@ -184,10 +280,11 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
 
   const loadMarketingState = async () => {
     try {
-      const [cfgRes, depRes, ordRes] = await Promise.all([
+      const [cfgRes, depRes, ordRes, anaRes] = await Promise.all([
         fetch('/api/marketing/config'),
         fetch('/api/deployments'),
         fetch('/api/marketing/orders'),
+        fetch('/api/analytics?slug=all&days=30'),
       ]);
       if (cfgRes.ok) {
         const cfg = await cfgRes.json();
@@ -203,6 +300,10 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
       if (ordRes.ok) {
         const ordData = await ordRes.json();
         setOrders(Array.isArray(ordData.orders) ? ordData.orders : []);
+      }
+      if (anaRes.ok) {
+        const anaData = (await anaRes.json()) as AnalyticsPayload;
+        setAnalytics(anaData);
       }
     } catch {
       // Silent fallback on transient fetch failure
@@ -253,6 +354,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
         name: dep.name,
         clientName: dep.clientName || project.clientName || 'Internal Studio',
         customDomain: dep.customDomain || null,
+        deployedAt: dep.deployedAt,
         isPublished: true,
       };
     }
@@ -261,14 +363,31 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
       name: project.name,
       clientName: project.clientName || 'Internal Studio',
       customDomain: project.seo?.customDomain || null,
+      deployedAt: project.lastDeployedAt || null,
       isPublished: Boolean(project.lastDeployedSlug),
     };
   }, [deployments, targetSlug, project]);
 
-  const copyText = async (value: string, key: string) => {
+  const heroPreviewImage = useMemo(() => {
+    const hero = project.blocks.find((b) => b.type === 'hero');
+    if (hero && hero.type === 'hero' && hero.props.imageUrl) {
+      return { url: hero.props.imageUrl, alt: hero.props.imageAlt || project.name };
+    }
+    const showcase = project.blocks.find((b) => b.type === 'showcase');
+    if (showcase && showcase.type === 'showcase' && showcase.props.imageUrl) {
+      return {
+        url: showcase.props.imageUrl,
+        alt: showcase.props.imageAlt || project.name,
+      };
+    }
+    return null;
+  }, [project.blocks, project.name]);
+
+  const copyText = async (value: string, key: string, toastMsg?: string) => {
     try {
       await navigator.clipboard.writeText(value);
       setCopiedKey(key);
+      if (toastMsg) onNotify?.(toastMsg);
       setTimeout(() => setCopiedKey(null), 1800);
     } catch {
       // Ignore clipboard failure
@@ -291,6 +410,22 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
   };
 
   const totalDueUsd = selectedPkg.priceUsd + Math.max(0, adBudgetUsd);
+
+  // Directional click & impression estimate based on selected channels and ad spend
+  const estimatedPerformance = useMemo(() => {
+    if (adBudgetUsd <= 0) {
+      return { minClicks: 0, maxClicks: 0, minImpressions: 0, maxImpressions: 0 };
+    }
+    const hasLinkedIn = selectedChannels.includes('LinkedIn Sponsored');
+    const hasSearch = selectedChannels.includes('Google Search');
+    const lowCpc = hasLinkedIn ? 3.2 : hasSearch ? 1.8 : 0.95;
+    const highCpc = hasLinkedIn ? 6.5 : hasSearch ? 3.9 : 2.1;
+    const minClicks = Math.max(10, Math.round(adBudgetUsd / highCpc));
+    const maxClicks = Math.max(minClicks + 15, Math.round(adBudgetUsd / lowCpc));
+    const minImpressions = Math.round(minClicks * 38);
+    const maxImpressions = Math.round(maxClicks * 54);
+    return { minClicks, maxClicks, minImpressions, maxImpressions };
+  }, [adBudgetUsd, selectedChannels]);
 
   const handleCheckoutSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -323,7 +458,10 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
       }
 
       if (data.order) {
-        setOrders((prev) => [data.order, ...prev.filter((o) => o.id !== data.order.id)]);
+        setOrders((prev) => [
+          data.order,
+          ...prev.filter((o) => o.id !== data.order.id),
+        ]);
       }
 
       if (data.checkoutUrl) {
@@ -333,9 +471,10 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
         );
       } else {
         setOrderNotice(
-          `Campaign order ${data.order?.id} saved for ${selectedSiteInfo.name} ($${totalDueUsd}). Review it under Campaign Orders.`
+          `Campaign order ${data.order?.id} saved for ${selectedSiteInfo.name} ($${totalDueUsd.toLocaleString()}). Manage it under Campaign Orders.`
         );
       }
+      onNotify?.('Campaign order created.');
     } catch (err) {
       setOrderError(
         err instanceof Error ? err.message : 'Unable to create campaign order.'
@@ -350,9 +489,9 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
     setKitError(null);
     try {
       const highlights = project.blocks
-        .slice(0, 5)
+        .slice(0, 6)
         .map((b) => {
-          if (b.type === 'hero') return b.props.headline;
+          if (b.type === 'hero') return `${b.props.headline} — ${b.props.subtitle}`;
           if (b.type === 'features') return b.props.heading;
           if (b.type === 'showcase') return b.props.heading;
           if (b.type === 'cta') return b.props.headline;
@@ -369,6 +508,8 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
           siteDescription: project.description,
           targetAudience,
           campaignGoal,
+          tone: campaignTone,
+          offer: offerHook,
           channels: selectedChannels,
           highlights,
         }),
@@ -377,7 +518,10 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
       if (!res.ok) {
         throw new Error(data.error || 'Failed to generate ad kit.');
       }
-      setAdKit(data.kit);
+      onUpdateMarketing({ savedKit: data.kit });
+      setPreviewHeadlineIdx(0);
+      setCheckedSteps({});
+      onNotify?.('AI Ad & Copy Kit generated and saved to project.');
     } catch (err) {
       setKitError(
         err instanceof Error ? err.message : 'Unable to generate ad kit.'
@@ -387,19 +531,71 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
     }
   };
 
+  const handleApplyOfferToPromoBar = () => {
+    if (!adKit) return;
+    const text =
+      offerHook.trim() ||
+      adKit.metaSocialAd.headline ||
+      adKit.emailBroadcast.subject;
+    const ctaLabel = adKit.metaSocialAd.callToAction || 'Get Started';
+    onUpdateMarketing({
+      announcementEnabled: true,
+      announcementText: text.slice(0, 120),
+      announcementCtaLabel: ctaLabel.slice(0, 30),
+      announcementCtaHref: '#contact',
+    });
+    onNotify?.('Applied offer copy to your Site Promotional Banner.');
+  };
+
+  const handleDownloadKitMarkdown = () => {
+    if (!adKit) return;
+    const md = buildKitMarkdown(selectedSiteInfo.name, adKit);
+    const blob = new Blob([md], { type: 'text/markdown;charset=utf-8;' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${selectedSiteInfo.slug || 'site'}-marketing-kit.md`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    onNotify?.('Campaign kit downloaded as Markdown.');
+  };
+
   const handleOrderStatusChange = async (
     orderId: string,
     status: MarketingOrderStatus
   ) => {
     try {
-      const res = await fetch(`/api/marketing/orders/${encodeURIComponent(orderId)}`, {
-        method: 'PATCH',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ status }),
-      });
+      const res = await fetch(
+        `/api/marketing/orders/${encodeURIComponent(orderId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ status }),
+        }
+      );
       const data = await res.json();
       if (res.ok && data.order) {
         setOrders((prev) => prev.map((o) => (o.id === orderId ? data.order : o)));
+        onNotify?.(`Order updated to ${formatStatusLabel(status)}.`);
+      }
+    } catch {
+      // Ignore network failure
+    }
+  };
+
+  const handleDeleteOrder = async (orderId: string) => {
+    try {
+      const res = await fetch(
+        `/api/marketing/orders/${encodeURIComponent(orderId)}`,
+        {
+          method: 'DELETE',
+        }
+      );
+      if (res.ok) {
+        setOrders((prev) => prev.filter((o) => o.id !== orderId));
+        onNotify?.('Campaign order removed.');
       }
     } catch {
       // Ignore network failure
@@ -414,48 +610,130 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
     return `${window.location.origin}/sites/${selectedSiteInfo.slug}`;
   }, [selectedSiteInfo]);
 
+  const displayDomain = useMemo(() => {
+    if (selectedSiteInfo.customDomain) {
+      return selectedSiteInfo.customDomain.replace(/^https?:\/\//i, '');
+    }
+    return `atelierframe.site/sites/${selectedSiteInfo.slug}`;
+  }, [selectedSiteInfo]);
+
+  const buildOrderTrackedUrl = (order: MarketingOrderRecord) => {
+    const dep = deployments.find((d) => d.slug === order.siteSlug);
+    const base = dep?.customDomain
+      ? `https://${dep.customDomain.replace(/^https?:\/\//i, '')}`
+      : `${window.location.origin}/sites/${order.siteSlug}`;
+    const firstChannel = (order.channels[0] || 'campaign').toLowerCase();
+    const src = firstChannel.includes('google')
+      ? 'google'
+      : firstChannel.includes('meta')
+      ? 'meta'
+      : firstChannel.includes('linkedin')
+      ? 'linkedin'
+      : 'campaign';
+    const params = new URLSearchParams({
+      utm_source: src,
+      utm_medium: src === 'google' ? 'cpc' : 'paid_social',
+      utm_campaign: order.utmCampaign || order.siteSlug,
+    });
+    return `${base}?${params.toString()}`;
+  };
+
   const trackedCampaignUrl = useMemo(() => {
     const params = new URLSearchParams();
     if (utmSource.trim()) params.set('utm_source', utmSource.trim());
     if (utmMedium.trim()) params.set('utm_medium', utmMedium.trim());
     if (utmCampaign.trim()) params.set('utm_campaign', utmCampaign.trim());
+    if (utmContent.trim()) params.set('utm_content', utmContent.trim());
     const qs = params.toString();
     return qs ? `${baseSiteUrl}?${qs}` : baseSiteUrl;
-  }, [baseSiteUrl, utmSource, utmMedium, utmCampaign]);
+  }, [baseSiteUrl, utmSource, utmMedium, utmCampaign, utmContent]);
 
   const mkt = project.marketing || {};
+  const ga4Status = validateGa4(mkt.ga4MeasurementId);
+  const adsStatus = validateGoogleAds(mkt.googleAdsId);
+  const metaStatus = validateMetaPixel(mkt.metaPixelId);
+  const liStatus = validateLinkedIn(mkt.linkedinPartnerId);
+
+  const hasPixelsOrSchema =
+    ga4Status === 'valid' ||
+    adsStatus === 'valid' ||
+    metaStatus === 'valid' ||
+    liStatus === 'valid' ||
+    Boolean(mkt.enableJsonLd);
+
   const totalRevenueUsd = orders
-    .filter((o) => o.status === 'paid' || o.status === 'active' || o.status === 'completed')
+    .filter(
+      (o) =>
+        o.status === 'paid' || o.status === 'active' || o.status === 'completed'
+    )
     .reduce((acc, o) => acc + o.totalUsd, 0);
   const activeCampaignsCount = orders.filter((o) => o.status === 'active').length;
+
+  // Attribution lookup per order from /api/analytics
+  const getOrderAttribution = (order: MarketingOrderRecord) => {
+    if (!analytics) return { siteViews: 0, siteLeads: 0, utmVisits: 0 };
+    const siteMetric = analytics.sites.find((s) => s.slug === order.siteSlug);
+    const utmNeedle = `/${order.utmCampaign}`.toLowerCase();
+    const utmVisits = analytics.recentEvents.filter(
+      (ev) =>
+        ev.siteSlug === order.siteSlug &&
+        ev.eventType === 'page_view' &&
+        ev.referrer.toLowerCase().includes(utmNeedle)
+    ).length;
+    return {
+      siteViews: siteMetric?.views || 0,
+      siteLeads: siteMetric?.leads || 0,
+      utmVisits,
+    };
+  };
+
+  const filteredOrders = useMemo(() => {
+    const q = orderSearch.trim().toLowerCase();
+    return orders.filter((o) => {
+      if (statusFilter !== 'all' && o.status !== statusFilter) return false;
+      if (!q) return true;
+      return (
+        o.siteName.toLowerCase().includes(q) ||
+        o.siteSlug.toLowerCase().includes(q) ||
+        o.customerEmail.toLowerCase().includes(q) ||
+        o.packageName.toLowerCase().includes(q) ||
+        o.utmCampaign.toLowerCase().includes(q)
+      );
+    });
+  }, [orders, orderSearch, statusFilter]);
 
   return (
     <div className="flex-1 overflow-y-auto studio-scroll bg-[#F4F2EC]">
       <div className="max-w-7xl mx-auto px-6 py-8 space-y-6">
-        {/* Header */}
-        <div className="flex flex-wrap items-center justify-between gap-4 pb-5 border-b border-[#DAD4C6]">
-          <div>
-            <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wider text-[#1D4ED8]">
-              <Megaphone className="w-4 h-4" />
+        {/* Editorial Studio Header */}
+        <div className="flex flex-wrap items-end justify-between gap-4 pb-5 border-b border-[#DAD4C6]">
+          <div className="max-w-2xl">
+            <div className="inline-flex items-center gap-2.5 text-sm font-semibold text-black">
+              <span className="w-5 h-0.5 bg-[#1D4ED8] shrink-0" />
               <span>Digital Marketing &amp; Paid Growth</span>
             </div>
-            <h1 className="text-2xl font-bold text-black mt-1 font-display">
+            <h1 className="text-2xl lg:text-3xl font-bold tracking-tight text-black mt-1.5 font-display">
               Promote &amp; Monetize Client Websites
             </h1>
-            <p className="text-sm text-black mt-1">
-              Let website owners pay for marketing packages and ad spend, generate multi-channel AI ad copy, embed tracking pixels, and attribute traffic with UTM links.
+            <p className="text-sm text-black mt-1 leading-relaxed">
+              Launch paid search and social campaigns, generate multi-channel AI ad copy, embed tracking pixels, and monitor attributed conversions.
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-2">
-            <div className="px-3.5 py-2 rounded-lg bg-white border border-[#DAD4C6] text-sm text-black tabular-nums">
-              Active Campaigns: <strong>{activeCampaignsCount}</strong> · Paid Volume:{' '}
-              <strong>${totalRevenueUsd.toLocaleString()}</strong>
+          <div className="flex flex-wrap items-center gap-3 shrink-0">
+            <div className="px-4 py-2 rounded-lg bg-white border border-[#DAD4C6] text-sm text-black tabular-nums flex items-center gap-3">
+              <span>
+                Live Campaigns: <strong>{activeCampaignsCount}</strong>
+              </span>
+              <span aria-hidden="true">·</span>
+              <span>
+                Paid Volume: <strong>${totalRevenueUsd.toLocaleString()}</strong>
+              </span>
             </div>
             <button
               type="button"
               onClick={onOpenDeploy}
-              className="flex items-center gap-1.5 px-3.5 py-2 rounded-lg bg-[#13151A] hover:bg-black text-white text-sm font-semibold cursor-pointer"
+              className="flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#13151A] hover:bg-black text-white text-sm font-semibold cursor-pointer whitespace-nowrap"
             >
               <Rocket className="w-4 h-4" />
               <span>Publish Site Updates</span>
@@ -463,14 +741,93 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
           </div>
         </div>
 
-        {/* Sub-navigation */}
+        {/* 4-Step Launch Readiness Strip */}
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
+          <button
+            type="button"
+            onClick={onOpenDeploy}
+            className="text-left p-3.5 rounded-xl bg-white border border-[#DAD4C6] hover:border-[#13151A] transition-colors cursor-pointer flex items-center justify-between gap-3"
+          >
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-black">01. Live Hosting</div>
+              <div className="text-sm font-bold text-black truncate mt-0.5">
+                {selectedSiteInfo.isPublished ? 'Published Live' : 'Draft Only'}
+              </div>
+            </div>
+            {selectedSiteInfo.isPublished ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-[#B45309] shrink-0" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSubTab('tracking')}
+            className="text-left p-3.5 rounded-xl bg-white border border-[#DAD4C6] hover:border-[#13151A] transition-colors cursor-pointer flex items-center justify-between gap-3"
+          >
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-black">02. Pixels &amp; Schema</div>
+              <div className="text-sm font-bold text-black truncate mt-0.5">
+                {hasPixelsOrSchema ? 'Tags Configured' : 'Needs Setup'}
+              </div>
+            </div>
+            {hasPixelsOrSchema ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <AlertCircle className="w-4 h-4 text-[#B45309] shrink-0" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSubTab('kit')}
+            className="text-left p-3.5 rounded-xl bg-white border border-[#DAD4C6] hover:border-[#13151A] transition-colors cursor-pointer flex items-center justify-between gap-3"
+          >
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-black">03. Creative Copy</div>
+              <div className="text-sm font-bold text-black truncate mt-0.5">
+                {adKit ? 'Ad Kit Ready' : 'Generate Copy'}
+              </div>
+            </div>
+            {adKit ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <Sparkles className="w-4 h-4 text-[#1D4ED8] shrink-0" />
+            )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setSubTab(orders.length > 0 ? 'orders' : 'launch')}
+            className="text-left p-3.5 rounded-xl bg-white border border-[#DAD4C6] hover:border-[#13151A] transition-colors cursor-pointer flex items-center justify-between gap-3"
+          >
+            <div className="min-w-0">
+              <div className="text-xs font-medium text-black">04. Paid Promotion</div>
+              <div className="text-sm font-bold text-black truncate mt-0.5 tabular-nums">
+                {activeCampaignsCount > 0
+                  ? `${activeCampaignsCount} Active`
+                  : orders.length > 0
+                  ? `${orders.length} Saved Orders`
+                  : 'Launch First Ad'}
+              </div>
+            </div>
+            {activeCampaignsCount > 0 ? (
+              <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0" />
+            ) : (
+              <Megaphone className="w-4 h-4 text-[#1D4ED8] shrink-0" />
+            )}
+          </button>
+        </div>
+
+        {/* Sub-navigation + Target Site Selector */}
         <div className="flex flex-wrap items-center justify-between gap-3">
           <div className="inline-flex flex-wrap items-center gap-1 p-1 bg-[#EAE6DC] rounded-lg border border-[#DAD4C6]">
             {(
               [
-                ['launch', 'Pay & Launch Campaign', CreditCard],
+                ['launch', 'Pay & Launch', CreditCard],
                 ['kit', 'AI Ad & Copy Kit', Sparkles],
-                ['tracking', 'Pixels, Promo Bar & UTMs', Tag],
+                ['tracking', 'Pixels, Promo & UTMs', Tag],
                 ['orders', `Campaign Orders (${orders.length})`, Target],
               ] as const
             ).map(([id, label, Icon]) => (
@@ -478,7 +835,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                 key={id}
                 type="button"
                 onClick={() => setSubTab(id)}
-                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-md text-sm font-semibold transition-all cursor-pointer ${
+                className={`flex items-center gap-1.5 px-3.5 py-2 rounded-md text-sm font-semibold transition-all cursor-pointer whitespace-nowrap shrink-0 ${
                   subTab === id
                     ? 'bg-white text-black shadow-xs border border-[#DAD4C6]/60'
                     : 'text-black hover:bg-white/60'
@@ -493,19 +850,19 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
           <div className="flex items-center gap-2">
             <label
               htmlFor="mkt-site-select"
-              className="text-xs font-semibold uppercase tracking-wide text-black"
+              className="text-sm font-semibold text-black whitespace-nowrap"
             >
-              Target Site:
+              Target Site
             </label>
             <select
               id="mkt-site-select"
               value={targetSlug}
               onChange={(e) => setTargetSlug(e.target.value)}
-              className="rounded-lg border border-[#DAD4C6] bg-white px-3 py-1.5 text-sm font-medium text-black focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
+              className="rounded-lg border border-[#DAD4C6] bg-white px-3 py-2 text-sm font-medium text-black focus:outline-none focus:ring-2 focus:ring-[#1D4ED8]"
             >
               {deployments.length === 0 ? (
                 <option value={slugify(project.slug || project.name)}>
-                  {project.name} (Draft / Active Canvas)
+                  {project.name} (Active Canvas)
                 </option>
               ) : (
                 <>
@@ -530,12 +887,15 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
         {/* Status Banners */}
         {orderNotice && (
           <div className="p-4 rounded-xl border border-emerald-300 bg-emerald-50 text-sm text-black flex flex-wrap items-center justify-between gap-3">
-            <span className="font-medium">{orderNotice}</span>
+            <div className="flex items-center gap-2 font-medium">
+              <CheckCircle2 className="w-4 h-4 text-emerald-700 shrink-0" />
+              <span>{orderNotice}</span>
+            </div>
             {pendingCheckoutUrl && (
               <a
                 href={pendingCheckoutUrl}
                 target="_top"
-                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#1D4ED8] hover:bg-[#163B9E] text-white text-sm font-semibold"
+                className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg bg-[#1D4ED8] hover:bg-[#163B9E] text-white text-sm font-semibold whitespace-nowrap"
               >
                 <span>Complete Card Payment</span>
                 <ExternalLink className="w-4 h-4" />
@@ -544,15 +904,16 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
           </div>
         )}
         {orderError && (
-          <div className="p-4 rounded-xl border border-red-300 bg-red-50 text-sm text-red-700 font-medium">
-            {orderError}
+          <div className="p-4 rounded-xl border border-red-300 bg-red-50 text-sm text-red-800 font-medium flex items-center gap-2">
+            <AlertCircle className="w-4 h-4 shrink-0" />
+            <span>{orderError}</span>
           </div>
         )}
 
         {/* TAB 1: PAY & LAUNCH CAMPAIGN */}
         {subTab === 'launch' && (
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-            {/* Package Cards */}
+            {/* Package Cards + Estimator */}
             <div className="lg:col-span-7 space-y-4">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 {MARKETING_PACKAGES.map((pkg) => {
@@ -562,27 +923,25 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                       key={pkg.id}
                       type="button"
                       onClick={() => handlePackageSelect(pkg)}
-                      className={`text-left p-5 rounded-xl border transition-all flex flex-col cursor-pointer ${
+                      className={`text-left p-5 rounded-xl border transition-all flex flex-col cursor-pointer bg-white ${
                         active
-                          ? 'bg-white border-[#1D4ED8] ring-2 ring-[#1D4ED8]/25 shadow-sm'
-                          : 'bg-white border-[#DAD4C6] hover:border-[#13151A]'
-                      }`}
+                          ? 'border-[#1D4ED8] ring-2 ring-[#1D4ED8]/20 shadow-sm'
+                          : 'border-[#DAD4C6] hover:border-[#13151A]'
+                      } ${pkg.recommended ? 'border-t-[3px] border-t-[#1D4ED8]' : ''}`}
                     >
-                      <div className="flex items-start justify-between gap-2">
-                        <span className="text-base font-bold text-black">
-                          {pkg.name}
-                        </span>
-                        {pkg.recommended && (
-                          <span className="px-2 py-0.5 rounded bg-[#1D4ED8] text-white text-xs font-semibold shrink-0">
-                            Popular
-                          </span>
-                        )}
+                      {pkg.recommended && (
+                        <div className="text-xs font-bold text-[#1D4ED8] mb-1">
+                          Recommended
+                        </div>
+                      )}
+                      <div className="text-base font-bold text-black">
+                        {pkg.name}
                       </div>
                       <p className="text-xs text-black mt-1 leading-relaxed">
                         {pkg.tagline}
                       </p>
                       <div className="mt-3 flex items-baseline gap-1.5">
-                        <span className="text-2xl font-bold text-black tabular-nums">
+                        <span className="text-2xl font-bold text-black tabular-nums font-display">
                           ${pkg.priceUsd}
                         </span>
                         <span className="text-xs font-medium text-black">
@@ -591,7 +950,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                             : 'one-time setup'}
                         </span>
                       </div>
-                      <ul className="mt-3 pt-3 border-t border-[#DAD4C6]/70 space-y-1.5 text-xs text-black">
+                      <ul className="mt-3 pt-3 border-t border-[#DAD4C6]/70 space-y-1.5 text-xs text-black flex-1">
                         {pkg.deliverables.map((d, i) => (
                           <li key={i} className="flex items-start gap-1.5">
                             <Check className="w-3.5 h-3.5 text-[#1D4ED8] shrink-0 mt-0.5" />
@@ -604,7 +963,62 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                 })}
               </div>
 
-              {/* Payment Gateway Transparency Notice */}
+              {/* Directional Reach & Budget Estimator */}
+              <div className="p-5 rounded-xl border border-[#DAD4C6] bg-white space-y-3">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div>
+                    <h3 className="text-sm font-bold text-black">
+                      Ad Spend Allocation &amp; Directional Reach
+                    </h3>
+                    <p className="text-xs text-black">
+                      Adjust monthly ad spend pass-through to preview expected campaign volume across {selectedChannels.length} selected channel{selectedChannels.length > 1 ? 's' : ''}.
+                    </p>
+                  </div>
+                  <div className="flex items-center gap-1 p-1 bg-[#EAE6DC] rounded-lg">
+                    {BUDGET_PRESETS.map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setAdBudgetUsd(preset)}
+                        className={`px-2.5 py-1 rounded-md text-xs font-mono font-semibold tabular-nums cursor-pointer transition-colors ${
+                          adBudgetUsd === preset
+                            ? 'bg-white text-black shadow-xs'
+                            : 'text-black hover:bg-white/60'
+                        }`}
+                      >
+                        ${preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-3 pt-3 border-t border-[#DAD4C6]">
+                  <div>
+                    <div className="text-xs text-black">Ad Spend Budget</div>
+                    <div className="text-lg font-bold font-mono text-black tabular-nums mt-0.5">
+                      ${adBudgetUsd.toLocaleString()}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-black">Est. Targeted Clicks</div>
+                    <div className="text-lg font-bold font-mono text-black tabular-nums mt-0.5">
+                      {adBudgetUsd > 0
+                        ? `${estimatedPerformance.minClicks.toLocaleString()}–${estimatedPerformance.maxClicks.toLocaleString()}`
+                        : '0'}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-black">Est. Ad Impressions</div>
+                    <div className="text-lg font-bold font-mono text-black tabular-nums mt-0.5">
+                      {adBudgetUsd > 0
+                        ? `${estimatedPerformance.minImpressions.toLocaleString()}–${estimatedPerformance.maxImpressions.toLocaleString()}`
+                        : '0'}
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              {/* Payment Gateway Notice */}
               <div className="p-4 rounded-xl border border-[#DAD4C6] bg-[#FAF9F5] text-sm text-black leading-relaxed">
                 <div className="font-semibold text-black flex items-center gap-2">
                   <CreditCard className="w-4 h-4 text-[#1D4ED8]" />
@@ -616,8 +1030,8 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                 </div>
                 <p className="text-xs text-black mt-1">
                   {stripeConfigured
-                    ? 'Submitting this order creates a real Stripe Checkout session for the package fee plus allocated ad spend, and updates campaign status automatically upon payment.'
-                    : 'Orders submitted here are persisted to your database with exact service fees and ad budgets so you can invoice clients or mark them paid. Add STRIPE_SECRET_KEY in Settings > Secrets to accept live card payments via Stripe Checkout.'}
+                    ? 'Submitting this order creates a real Stripe Checkout session for the package fee plus allocated ad spend, and marks the campaign ready automatically upon payment.'
+                    : 'Orders submitted here are persisted with exact service fees and ad budgets so you can invoice clients or mark them paid. Add STRIPE_SECRET_KEY in environment settings to accept instant card payments.'}
                 </p>
               </div>
             </div>
@@ -625,16 +1039,23 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
             {/* Order Configuration & Checkout Summary */}
             <form
               onSubmit={handleCheckoutSubmit}
-              className="lg:col-span-5 bg-white border border-[#DAD4C6] rounded-xl p-6 space-y-4"
+              className="lg:col-span-5 bg-white border border-[#DAD4C6] rounded-xl p-6 space-y-4 lg:sticky lg:top-6"
             >
-              <div>
+              <div className="pb-3 border-b border-[#DAD4C6]">
                 <h2 className="text-lg font-bold text-black font-display">
                   Campaign Checkout Summary
                 </h2>
-                <p className="text-xs text-black mt-0.5">
-                  Target: <strong>{selectedSiteInfo.name}</strong> (/sites/
-                  {selectedSiteInfo.slug})
-                </p>
+                <div className="flex flex-wrap items-center gap-1.5 text-xs text-black mt-1">
+                  <span className="font-semibold">{selectedSiteInfo.name}</span>
+                  <span aria-hidden="true">·</span>
+                  <span className="font-mono">/sites/{selectedSiteInfo.slug}</span>
+                  {selectedSiteInfo.customDomain && (
+                    <>
+                      <span aria-hidden="true">·</span>
+                      <span className="font-mono">{selectedSiteInfo.customDomain}</span>
+                    </>
+                  )}
+                </div>
               </div>
 
               <div>
@@ -665,7 +1086,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                         onClick={() => toggleChannel(ch)}
                         className={`text-left px-3 py-2 rounded-lg border text-xs font-semibold transition-colors cursor-pointer ${
                           checked
-                            ? 'border-[#1D4ED8] bg-blue-50/60 text-black'
+                            ? 'border-[#1D4ED8] bg-blue-50/70 text-black'
                             : 'border-[#DAD4C6] bg-[#FAF9F5] text-black hover:bg-white'
                         }`}
                       >
@@ -697,7 +1118,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
 
                 <div>
                   <label className="block text-sm font-medium text-black mb-1">
-                    Ad Spend Budget (USD)
+                    Custom Ad Budget (USD)
                   </label>
                   <input
                     type="number"
@@ -715,7 +1136,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
 
               <div>
                 <label className="block text-sm font-medium text-black mb-1">
-                  Target Audience &amp; Location
+                  Target Audience &amp; Geography
                 </label>
                 <textarea
                   rows={2}
@@ -740,6 +1161,10 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                     ${adBudgetUsd}
                   </span>
                 </div>
+                <div className="flex justify-between text-xs pt-1">
+                  <span>UTM Attribution Tag</span>
+                  <span className="font-mono">{utmCampaign}</span>
+                </div>
                 <div className="pt-2 border-t border-[#DAD4C6] flex justify-between text-base font-bold">
                   <span>Total Due</span>
                   <span className="font-mono tabular-nums">
@@ -751,7 +1176,7 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
               <button
                 type="submit"
                 disabled={isSubmittingOrder}
-                className="w-full py-2.5 px-4 rounded-lg bg-[#1D4ED8] hover:bg-[#163B9E] disabled:bg-blue-400 text-white text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer"
+                className="w-full py-2.5 px-4 rounded-lg bg-[#1D4ED8] hover:bg-[#163B9E] disabled:bg-blue-400 text-white text-sm font-semibold flex items-center justify-center gap-2 cursor-pointer transition-colors"
               >
                 <CreditCard className="w-4 h-4" />
                 <span>
@@ -769,83 +1194,124 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
         {/* TAB 2: AI AD & COPY KIT */}
         {subTab === 'kit' && (
           <div className="space-y-5">
-            <div className="bg-white border border-[#DAD4C6] rounded-xl p-6 flex flex-wrap items-center justify-between gap-4">
-              <div>
-                <h2 className="text-lg font-bold text-black font-display">
-                  AI Multi-Channel Campaign Kit
-                </h2>
-                <p className="text-sm text-black mt-1">
-                  Generate ready-to-run Google Search Ads, Meta social ads, LinkedIn outreach, email broadcasts, and target keywords tailored to{' '}
-                  <strong>{selectedSiteInfo.name}</strong>.
-                </p>
+            {/* Controls Bar */}
+            <div className="bg-white border border-[#DAD4C6] rounded-xl p-6 space-y-4">
+              <div className="flex flex-wrap items-start justify-between gap-4">
+                <div>
+                  <h2 className="text-lg font-bold text-black font-display">
+                    AI Multi-Channel Campaign Kit
+                  </h2>
+                  <p className="text-sm text-black mt-1">
+                    Generates tailored Google Search Ads, Meta social ads, LinkedIn outreach, email broadcasts, and keywords from{' '}
+                    <strong>{selectedSiteInfo.name}</strong> and saves directly to your project.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  {adKit && (
+                    <>
+                      <button
+                        type="button"
+                        onClick={handleApplyOfferToPromoBar}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#DAD4C6] bg-[#FAF9F5] hover:bg-white text-black text-xs font-semibold cursor-pointer whitespace-nowrap"
+                      >
+                        <Megaphone className="w-3.5 h-3.5 text-[#1D4ED8]" />
+                        <span>Apply to Promo Bar</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleDownloadKitMarkdown}
+                        className="flex items-center gap-1.5 px-3 py-2 rounded-lg border border-[#DAD4C6] bg-white hover:bg-[#FAF9F5] text-black text-xs font-semibold cursor-pointer whitespace-nowrap"
+                      >
+                        <Download className="w-3.5 h-3.5" />
+                        <span>Export .md</span>
+                      </button>
+                    </>
+                  )}
+                  <button
+                    type="button"
+                    disabled={isGeneratingKit}
+                    onClick={handleGenerateAdKit}
+                    className="flex items-center gap-2 px-4 py-2 rounded-lg bg-[#1D4ED8] hover:bg-[#163B9E] disabled:bg-blue-400 text-white text-sm font-semibold cursor-pointer whitespace-nowrap"
+                  >
+                    <Sparkles className="w-4 h-4" />
+                    <span>
+                      {isGeneratingKit
+                        ? 'Generating Campaign Kit...'
+                        : adKit
+                        ? 'Regenerate Kit'
+                        : 'Generate Ad & Copy Kit'}
+                    </span>
+                  </button>
+                </div>
               </div>
-              <button
-                type="button"
-                disabled={isGeneratingKit}
-                onClick={handleGenerateAdKit}
-                className="flex items-center gap-2 px-4 py-2.5 rounded-lg bg-[#1D4ED8] hover:bg-[#163B9E] disabled:bg-blue-400 text-white text-sm font-semibold cursor-pointer"
-              >
-                <Sparkles className="w-4 h-4" />
-                <span>
-                  {isGeneratingKit ? 'Generating Campaign Kit...' : 'Generate Ad & Copy Kit'}
-                </span>
-              </button>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-3 pt-4 border-t border-[#DAD4C6]">
+                <div>
+                  <label className="block text-xs font-semibold text-black mb-1">
+                    Campaign Angle &amp; Tone
+                  </label>
+                  <select
+                    value={campaignTone}
+                    onChange={(e) =>
+                      onUpdateMarketing({ campaignTone: e.target.value })
+                    }
+                    className="w-full rounded-lg border border-[#DAD4C6] bg-white px-3 py-2 text-sm text-black"
+                  >
+                    {TONE_OPTIONS.map((t) => (
+                      <option key={t} value={t}>
+                        {t}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-black mb-1">
+                    Key Offer / Lead Magnet
+                  </label>
+                  <input
+                    type="text"
+                    value={offerHook}
+                    onChange={(e) => setOfferHook(e.target.value)}
+                    placeholder="e.g. Free 30-min consultation or 15% launch offer"
+                    className="w-full rounded-lg border border-[#DAD4C6] bg-white px-3 py-2 text-sm text-black placeholder:text-black/60"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-black mb-1">
+                    Target Audience
+                  </label>
+                  <input
+                    type="text"
+                    value={targetAudience}
+                    onChange={(e) => setTargetAudience(e.target.value)}
+                    placeholder="e.g. Architects, founders, local homeowners"
+                    className="w-full rounded-lg border border-[#DAD4C6] bg-white px-3 py-2 text-sm text-black placeholder:text-black/60"
+                  />
+                </div>
+              </div>
             </div>
 
             {kitError && (
-              <div className="p-4 rounded-xl border border-red-300 bg-red-50 text-sm text-red-700 font-medium">
+              <div className="p-4 rounded-xl border border-red-300 bg-red-50 text-sm text-red-800 font-medium">
                 {kitError}
               </div>
             )}
 
             {!adKit ? (
-              <div className="bg-white border border-[#DAD4C6] rounded-xl p-10 text-center space-y-2">
+              <div className="bg-white border border-[#DAD4C6] rounded-xl p-10 text-center space-y-3">
                 <p className="text-base font-semibold text-black">
-                  No campaign kit generated yet
+                  No campaign kit generated for this project yet
                 </p>
-                <p className="text-sm text-black max-w-lg mx-auto">
-                  Click &ldquo;Generate Ad &amp; Copy Kit&rdquo; above to create channel-ready ad headlines, social copy, email launch copy, and high-intent search keywords from your site sections.
+                <p className="text-sm text-black max-w-lg mx-auto leading-relaxed">
+                  Choose a tone and optional launch offer above, then click &ldquo;Generate Ad &amp; Copy Kit&rdquo; to create live Google Search previews, Meta social creative, email broadcasts, and high-intent keywords.
                 </p>
               </div>
             ) : (
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-5">
-                {/* Strategy & Keywords */}
-                <div className="bg-white border border-[#DAD4C6] rounded-xl p-5 space-y-3">
-                  <div className="flex items-center justify-between">
-                    <h3 className="text-base font-bold text-black">
-                      Positioning &amp; Target Keywords
-                    </h3>
-                    <button
-                      type="button"
-                      onClick={() =>
-                        copyText(adKit.targetKeywords.join(', '), 'keywords')
-                      }
-                      className="text-xs font-semibold text-[#1D4ED8] flex items-center gap-1 cursor-pointer"
-                    >
-                      {copiedKey === 'keywords' ? (
-                        <Check className="w-3.5 h-3.5" />
-                      ) : (
-                        <Copy className="w-3.5 h-3.5" />
-                      )}
-                      <span>{copiedKey === 'keywords' ? 'Copied' : 'Copy Keywords'}</span>
-                    </button>
-                  </div>
-                  <p className="text-sm text-black leading-relaxed">{adKit.summary}</p>
-                  <div className="flex flex-wrap gap-1.5 pt-1">
-                    {adKit.targetKeywords.map((kw, idx) => (
-                      <span
-                        key={idx}
-                        className="px-2.5 py-1 rounded-md bg-[#FAF9F5] border border-[#DAD4C6] text-xs font-medium text-black"
-                      >
-                        {kw}
-                      </span>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Google Search Ads */}
-                <div className="bg-white border border-[#DAD4C6] rounded-xl p-5 space-y-3">
-                  <div className="flex items-center justify-between">
+                {/* Google Search Ad Preview + Headlines */}
+                <div className="bg-white border border-[#DAD4C6] rounded-xl p-5 space-y-4">
+                  <div className="flex items-center justify-between gap-2">
                     <h3 className="text-base font-bold text-black">
                       Google Search Responsive Ad
                     </h3>
@@ -854,7 +1320,8 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                       onClick={() =>
                         copyText(
                           `Headlines:\n${adKit.googleSearchAd.headlines.join('\n')}\n\nDescriptions:\n${adKit.googleSearchAd.descriptions.join('\n')}`,
-                          'google-ad'
+                          'google-ad',
+                          'Google Search ad copy copied.'
                         )
                       }
                       className="text-xs font-semibold text-[#1D4ED8] flex items-center gap-1 cursor-pointer"
@@ -867,46 +1334,87 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                       <span>{copiedKey === 'google-ad' ? 'Copied' : 'Copy Ad'}</span>
                     </button>
                   </div>
+
+                  {/* SERP Ad Preview */}
+                  <div className="p-4 rounded-lg border border-[#DAD4C6] bg-[#FAF9F5] space-y-1.5">
+                    <div className="flex items-center justify-between gap-2 text-xs text-black">
+                      <span className="font-semibold">
+                        Sponsored · {displayDomain}
+                      </span>
+                      <div className="flex items-center gap-1">
+                        {adKit.googleSearchAd.headlines.slice(0, 3).map((_, idx) => (
+                          <button
+                            key={idx}
+                            type="button"
+                            onClick={() => setPreviewHeadlineIdx(idx)}
+                            className={`px-1.5 py-0.5 rounded text-xs font-mono cursor-pointer ${
+                              previewHeadlineIdx === idx
+                                ? 'bg-[#1D4ED8] text-white'
+                                : 'bg-white border border-[#DAD4C6] text-black'
+                            }`}
+                          >
+                            V{idx + 1}
+                          </button>
+                        ))}
+                      </div>
+                    </div>
+                    <div className="text-base font-semibold text-[#1D4ED8] leading-snug">
+                      {adKit.googleSearchAd.headlines[previewHeadlineIdx] ||
+                        adKit.googleSearchAd.headlines[0]}{' '}
+                      | {selectedSiteInfo.name}
+                    </div>
+                    <p className="text-sm text-black leading-relaxed">
+                      {adKit.googleSearchAd.descriptions[0]}
+                    </p>
+                  </div>
+
                   <div className="space-y-1.5">
-                    <div className="text-xs font-semibold uppercase text-black">
-                      Headlines
+                    <div className="text-xs font-semibold text-black">
+                      Headline Variations
                     </div>
                     {adKit.googleSearchAd.headlines.map((h, i) => (
                       <div
                         key={i}
-                        className="px-3 py-1.5 rounded bg-[#FAF9F5] border border-[#DAD4C6] text-sm font-semibold text-[#1D4ED8]"
+                        className="px-3 py-1.5 rounded bg-[#FAF9F5] border border-[#DAD4C6] flex items-center justify-between gap-2"
                       >
-                        {h}
+                        <span className="text-sm font-semibold text-black">{h}</span>
+                        <span className="text-xs font-mono text-black tabular-nums shrink-0">
+                          {h.length}/30
+                        </span>
                       </div>
                     ))}
                   </div>
                   <div className="space-y-1.5">
-                    <div className="text-xs font-semibold uppercase text-black">
+                    <div className="text-xs font-semibold text-black">
                       Descriptions
                     </div>
                     {adKit.googleSearchAd.descriptions.map((d, i) => (
                       <div
                         key={i}
-                        className="px-3 py-1.5 rounded bg-[#FAF9F5] border border-[#DAD4C6] text-sm text-black"
+                        className="px-3 py-1.5 rounded bg-[#FAF9F5] border border-[#DAD4C6] flex items-start justify-between gap-2"
                       >
-                        {d}
+                        <span className="text-sm text-black">{d}</span>
+                        <span className="text-xs font-mono text-black tabular-nums shrink-0 mt-0.5">
+                          {d.length}/90
+                        </span>
                       </div>
                     ))}
                   </div>
                 </div>
 
-                {/* Meta Ad */}
-                <div className="bg-white border border-[#DAD4C6] rounded-xl p-5 space-y-3">
+                {/* Meta Social Ad Live Card Preview */}
+                <div className="bg-white border border-[#DAD4C6] rounded-xl p-5 space-y-4">
                   <div className="flex items-center justify-between">
                     <h3 className="text-base font-bold text-black">
-                      Meta (Instagram &amp; Facebook) Ad
+                      Meta (Instagram &amp; Facebook) Feed Ad
                     </h3>
                     <button
                       type="button"
                       onClick={() =>
                         copyText(
                           `${adKit.metaSocialAd.primaryText}\n\nHeadline: ${adKit.metaSocialAd.headline}\nCTA: ${adKit.metaSocialAd.callToAction}`,
-                          'meta-ad'
+                          'meta-ad',
+                          'Meta social ad copy copied.'
                         )
                       }
                       className="text-xs font-semibold text-[#1D4ED8] flex items-center gap-1 cursor-pointer"
@@ -919,21 +1427,97 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                       <span>{copiedKey === 'meta-ad' ? 'Copied' : 'Copy Ad'}</span>
                     </button>
                   </div>
-                  <p className="text-sm text-black leading-relaxed whitespace-pre-line">
-                    {adKit.metaSocialAd.primaryText}
-                  </p>
-                  <div className="p-3 rounded-lg bg-[#FAF9F5] border border-[#DAD4C6] flex items-center justify-between gap-2">
-                    <span className="text-sm font-semibold text-black">
-                      {adKit.metaSocialAd.headline}
-                    </span>
-                    <span className="px-2.5 py-1 rounded bg-[#13151A] text-white text-xs font-semibold shrink-0">
-                      {adKit.metaSocialAd.callToAction}
-                    </span>
+
+                  {/* Visual Feed Card */}
+                  <div className="border border-[#DAD4C6] rounded-lg overflow-hidden bg-white">
+                    <div className="px-3.5 py-2.5 flex items-center justify-between border-b border-[#DAD4C6]">
+                      <div>
+                        <div className="text-sm font-bold text-black">
+                          {selectedSiteInfo.name}
+                        </div>
+                        <div className="text-xs text-black">Sponsored</div>
+                      </div>
+                    </div>
+                    <p className="px-3.5 py-3 text-sm text-black leading-relaxed whitespace-pre-line">
+                      {adKit.metaSocialAd.primaryText}
+                    </p>
+                    {heroPreviewImage ? (
+                      <img
+                        src={heroPreviewImage.url}
+                        alt={heroPreviewImage.alt}
+                        referrerPolicy="no-referrer"
+                        className="w-full aspect-[16/9] object-cover border-y border-[#DAD4C6]"
+                      />
+                    ) : (
+                      <div className="w-full aspect-[16/9] bg-[#FAF9F5] border-y border-[#DAD4C6] flex flex-col items-center justify-center gap-1.5 text-black">
+                        <ImageOff className="w-5 h-5" />
+                        <span className="text-xs font-medium">
+                          Add a Hero or Showcase image to preview creative
+                        </span>
+                      </div>
+                    )}
+                    <div className="p-3.5 bg-[#FAF9F5] flex items-center justify-between gap-3">
+                      <div className="min-w-0">
+                        <div className="text-xs font-mono text-black truncate">
+                          {displayDomain}
+                        </div>
+                        <div className="text-sm font-bold text-black truncate">
+                          {adKit.metaSocialAd.headline}
+                        </div>
+                      </div>
+                      <span className="px-3 py-1.5 rounded-md bg-[#13151A] text-white text-xs font-semibold whitespace-nowrap shrink-0">
+                        {adKit.metaSocialAd.callToAction}
+                      </span>
+                    </div>
                   </div>
                 </div>
 
-                {/* LinkedIn & Email */}
-                <div className="bg-white border border-[#DAD4C6] rounded-xl p-5 space-y-4">
+                {/* Positioning & Keywords */}
+                <div className="bg-white border border-[#DAD4C6] rounded-xl p-5 space-y-3">
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-base font-bold text-black">
+                      Positioning &amp; Target Keywords
+                    </h3>
+                    <button
+                      type="button"
+                      onClick={() =>
+                        copyText(
+                          adKit.targetKeywords.join(', '),
+                          'keywords',
+                          'Target keywords copied.'
+                        )
+                      }
+                      className="text-xs font-semibold text-[#1D4ED8] flex items-center gap-1 cursor-pointer"
+                    >
+                      {copiedKey === 'keywords' ? (
+                        <Check className="w-3.5 h-3.5" />
+                      ) : (
+                        <Copy className="w-3.5 h-3.5" />
+                      )}
+                      <span>
+                        {copiedKey === 'keywords' ? 'Copied' : 'Copy Keywords'}
+                      </span>
+                    </button>
+                  </div>
+                  <p className="text-sm text-black leading-relaxed">
+                    {adKit.summary}
+                  </p>
+                  <div className="pt-2 border-t border-[#DAD4C6] text-xs font-medium text-black leading-relaxed">
+                    {adKit.targetKeywords.map((kw, idx) => (
+                      <React.Fragment key={idx}>
+                        {idx > 0 && (
+                          <span aria-hidden="true" className="mx-1.5">
+                            ·
+                          </span>
+                        )}
+                        <span className="font-mono">{kw}</span>
+                      </React.Fragment>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Email Broadcast */}
+                <div className="bg-white border border-[#DAD4C6] rounded-xl p-5 space-y-3">
                   <div className="flex items-center justify-between">
                     <h3 className="text-base font-bold text-black">
                       Email Launch Broadcast
@@ -943,7 +1527,8 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                       onClick={() =>
                         copyText(
                           `Subject: ${adKit.emailBroadcast.subject}\nPreview: ${adKit.emailBroadcast.previewText}\n\n${adKit.emailBroadcast.body}`,
-                          'email-ad'
+                          'email-ad',
+                          'Email broadcast copy copied.'
                         )
                       }
                       className="text-xs font-semibold text-[#1D4ED8] flex items-center gap-1 cursor-pointer"
@@ -953,7 +1538,9 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                       ) : (
                         <Copy className="w-3.5 h-3.5" />
                       )}
-                      <span>{copiedKey === 'email-ad' ? 'Copied' : 'Copy Email'}</span>
+                      <span>
+                        {copiedKey === 'email-ad' ? 'Copied' : 'Copy Email'}
+                      </span>
                     </button>
                   </div>
                   <div className="text-sm text-black space-y-1.5">
@@ -980,7 +1567,8 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                       onClick={() =>
                         copyText(
                           `${adKit.linkedinPost.hook}\n\n${adKit.linkedinPost.body}\n\n${adKit.linkedinPost.cta}`,
-                          'linkedin-ad'
+                          'linkedin-ad',
+                          'LinkedIn post copy copied.'
                         )
                       }
                       className="text-xs font-semibold text-[#1D4ED8] flex items-center gap-1 cursor-pointer"
@@ -990,7 +1578,9 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                       ) : (
                         <Copy className="w-3.5 h-3.5" />
                       )}
-                      <span>{copiedKey === 'linkedin-ad' ? 'Copied' : 'Copy Post'}</span>
+                      <span>
+                        {copiedKey === 'linkedin-ad' ? 'Copied' : 'Copy Post'}
+                      </span>
                     </button>
                   </div>
                   <div className="text-sm font-semibold text-black">
@@ -1004,20 +1594,47 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                   </div>
                 </div>
 
-                {/* 7-Day Launch Checklist */}
+                {/* Interactive 7-Day Launch Checklist */}
                 <div className="bg-white border border-[#DAD4C6] rounded-xl p-5 space-y-3">
-                  <h3 className="text-base font-bold text-black">
-                    7-Day Launch Action Plan
-                  </h3>
+                  <div className="flex items-center justify-between">
+                    <h3 className="text-base font-bold text-black">
+                      7-Day Launch Action Plan
+                    </h3>
+                    <span className="text-xs font-mono text-black tabular-nums">
+                      {
+                        adKit.launchChecklist.filter((_, idx) => checkedSteps[idx])
+                          .length
+                      }
+                      /{adKit.launchChecklist.length} complete
+                    </span>
+                  </div>
                   <ul className="space-y-2 text-sm text-black">
-                    {adKit.launchChecklist.map((step, i) => (
-                      <li key={i} className="flex items-start gap-2">
-                        <span className="font-mono text-xs font-bold px-1.5 py-0.5 rounded bg-[#EAE6DC] text-black shrink-0 mt-0.5">
-                          {i + 1}
-                        </span>
-                        <span>{step}</span>
-                      </li>
-                    ))}
+                    {adKit.launchChecklist.map((step, i) => {
+                      const done = Boolean(checkedSteps[i]);
+                      return (
+                        <li key={i}>
+                          <label className="flex items-start gap-2.5 cursor-pointer">
+                            <input
+                              type="checkbox"
+                              checked={done}
+                              onChange={() =>
+                                setCheckedSteps((prev) => ({
+                                  ...prev,
+                                  [i]: !prev[i],
+                                }))
+                              }
+                              className="mt-1"
+                            />
+                            <span className={done ? 'line-through opacity-60' : ''}>
+                              <strong className="font-mono mr-1.5">
+                                {String(i + 1).padStart(2, '0')}.
+                              </strong>
+                              {step}
+                            </span>
+                          </label>
+                        </li>
+                      );
+                    })}
                   </ul>
                 </div>
               </div>
@@ -1028,8 +1645,8 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
         {/* TAB 3: PIXELS, PROMO BAR & UTM BUILDER */}
         {subTab === 'tracking' && (
           <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 items-start">
-            {/* Tracking Pixels & Schema */}
-            <div className="bg-white border border-[#DAD4C6] rounded-xl p-6 space-y-4">
+            {/* Tracking Pixels, Schema & Promo Bar */}
+            <div className="bg-white border border-[#DAD4C6] rounded-xl p-6 space-y-5">
               <div>
                 <h2 className="text-lg font-bold text-black font-display">
                   Ad Pixels &amp; Analytics Tags
@@ -1039,11 +1656,23 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3.5">
                 <div>
-                  <label className="block text-xs font-semibold text-black mb-1">
-                    Google Analytics 4 ID
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-black">
+                      Google Analytics 4 ID
+                    </label>
+                    {ga4Status === 'valid' && (
+                      <span className="text-xs font-semibold text-emerald-700">
+                        Valid
+                      </span>
+                    )}
+                    {ga4Status === 'invalid' && (
+                      <span className="text-xs font-semibold text-[#B45309]">
+                        Use G-XXXXXXXX
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="text"
                     value={mkt.ga4MeasurementId || ''}
@@ -1055,9 +1684,21 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-black mb-1">
-                    Google Ads Tag ID
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-black">
+                      Google Ads Tag ID
+                    </label>
+                    {adsStatus === 'valid' && (
+                      <span className="text-xs font-semibold text-emerald-700">
+                        Valid
+                      </span>
+                    )}
+                    {adsStatus === 'invalid' && (
+                      <span className="text-xs font-semibold text-[#B45309]">
+                        Use AW-123456
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="text"
                     value={mkt.googleAdsId || ''}
@@ -1069,9 +1710,21 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-black mb-1">
-                    Meta (Facebook) Pixel ID
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-black">
+                      Meta (Facebook) Pixel ID
+                    </label>
+                    {metaStatus === 'valid' && (
+                      <span className="text-xs font-semibold text-emerald-700">
+                        Valid
+                      </span>
+                    )}
+                    {metaStatus === 'invalid' && (
+                      <span className="text-xs font-semibold text-[#B45309]">
+                        8–22 digits
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="text"
                     value={mkt.metaPixelId || ''}
@@ -1083,9 +1736,21 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-black mb-1">
-                    LinkedIn Partner ID
-                  </label>
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs font-semibold text-black">
+                      LinkedIn Partner ID
+                    </label>
+                    {liStatus === 'valid' && (
+                      <span className="text-xs font-semibold text-emerald-700">
+                        Valid
+                      </span>
+                    )}
+                    {liStatus === 'invalid' && (
+                      <span className="text-xs font-semibold text-[#B45309]">
+                        4–16 digits
+                      </span>
+                    )}
+                  </div>
                   <input
                     type="text"
                     value={mkt.linkedinPartnerId || ''}
@@ -1165,6 +1830,36 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                     className="w-full rounded-lg border border-[#DAD4C6] bg-white px-3 py-2 text-sm font-mono text-black placeholder:text-black/60"
                   />
                 </div>
+
+                {/* Live Theme-Matched Preview */}
+                <div className="space-y-1.5 pt-1">
+                  <div className="text-xs font-medium text-black">
+                    Live Banner Preview (styled with active site palette)
+                  </div>
+                  <div
+                    className="rounded-lg px-4 py-2.5 flex flex-wrap items-center justify-center gap-3 text-center border border-black/15"
+                    style={{
+                      backgroundColor: project.theme.contrastBgColor,
+                      color: '#FFFFFF',
+                      fontFamily: `"${project.theme.bodyFont}", system-ui, sans-serif`,
+                    }}
+                  >
+                    <span className="text-xs sm:text-sm font-medium">
+                      {mkt.announcementText?.trim() ||
+                        'Spring Launch Offer: Book an audit this month and save 20%.'}
+                    </span>
+                    <span
+                      className="px-2.5 py-1 text-xs font-semibold whitespace-nowrap"
+                      style={{
+                        backgroundColor: project.theme.primaryColor,
+                        color: project.theme.accentTextColor,
+                        borderRadius: project.theme.radius,
+                      }}
+                    >
+                      {mkt.announcementCtaLabel?.trim() || 'Claim Offer'}
+                    </span>
+                  </div>
+                </div>
               </div>
             </div>
 
@@ -1176,11 +1871,11 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                   <span>Trackable UTM Campaign Link Builder</span>
                 </h2>
                 <p className="text-xs text-black mt-1">
-                  Share these links in Google Ads, Instagram, LinkedIn, or newsletters. Visits automatically attribute in your Analytics Referrers table.
+                  Share these links in Google Ads, Instagram, LinkedIn, or newsletters. Visits automatically attribute in Analytics and Campaign Orders.
                 </p>
               </div>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-semibold text-black mb-1">
                     utm_source
@@ -1217,12 +1912,24 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                     className="w-full rounded-lg border border-[#DAD4C6] bg-white px-2.5 py-2 text-sm font-mono text-black"
                   />
                 </div>
+                <div>
+                  <label className="block text-xs font-semibold text-black mb-1">
+                    utm_content (optional variant)
+                  </label>
+                  <input
+                    type="text"
+                    value={utmContent}
+                    onChange={(e) => setUtmContent(e.target.value)}
+                    placeholder="hero-banner-v1"
+                    className="w-full rounded-lg border border-[#DAD4C6] bg-white px-2.5 py-2 text-sm font-mono text-black placeholder:text-black/50"
+                  />
+                </div>
               </div>
 
               <div className="flex flex-wrap gap-1.5">
                 {[
                   ['Google Search', 'google', 'cpc'],
-                  ['Instagram Bio/Ad', 'instagram', 'paid_social'],
+                  ['Instagram Ad', 'instagram', 'paid_social'],
                   ['LinkedIn Post', 'linkedin', 'sponsored'],
                   ['Newsletter', 'newsletter', 'email'],
                 ].map(([label, src, med]) => (
@@ -1240,27 +1947,46 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
                 ))}
               </div>
 
-              <div className="p-3.5 rounded-lg bg-[#13151A] text-white space-y-2">
-                <div className="text-xs font-semibold uppercase tracking-wide text-white/75">
+              <div className="p-4 rounded-lg bg-[#13151A] text-white space-y-3">
+                <div className="text-xs font-semibold text-white/75">
                   Tracked Destination URL
                 </div>
                 <div className="text-xs font-mono break-all leading-relaxed">
                   {trackedCampaignUrl}
                 </div>
-                <button
-                  type="button"
-                  onClick={() => copyText(trackedCampaignUrl, 'utm-url')}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#1D4ED8] hover:bg-[#163B9E] text-white text-xs font-semibold cursor-pointer"
-                >
-                  {copiedKey === 'utm-url' ? (
-                    <Check className="w-3.5 h-3.5" />
-                  ) : (
-                    <Copy className="w-3.5 h-3.5" />
+                <div className="flex flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      copyText(
+                        trackedCampaignUrl,
+                        'utm-url',
+                        'Campaign UTM link copied.'
+                      )
+                    }
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded bg-[#1D4ED8] hover:bg-[#163B9E] text-white text-xs font-semibold cursor-pointer"
+                  >
+                    {copiedKey === 'utm-url' ? (
+                      <Check className="w-3.5 h-3.5" />
+                    ) : (
+                      <Copy className="w-3.5 h-3.5" />
+                    )}
+                    <span>
+                      {copiedKey === 'utm-url' ? 'Copied URL' : 'Copy Campaign URL'}
+                    </span>
+                  </button>
+                  {selectedSiteInfo.isPublished && (
+                    <a
+                      href={trackedCampaignUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded border border-white/25 bg-white/10 hover:bg-white/15 text-white text-xs font-semibold"
+                    >
+                      <span>Test Tracked Link</span>
+                      <ExternalLink className="w-3.5 h-3.5" />
+                    </a>
                   )}
-                  <span>
-                    {copiedKey === 'utm-url' ? 'Copied URL' : 'Copy Campaign URL'}
-                  </span>
-                </button>
+                </div>
               </div>
             </div>
           </div>
@@ -1269,140 +1995,293 @@ export const MarketingView: React.FC<MarketingViewProps> = ({
         {/* TAB 4: CAMPAIGN ORDERS LEDGER */}
         {subTab === 'orders' && (
           <div className="bg-white border border-[#DAD4C6] rounded-xl overflow-hidden">
-            <div className="px-6 py-4 border-b border-[#DAD4C6] bg-[#F8F6F1] flex flex-wrap items-center justify-between gap-2">
+            <div className="px-6 py-4 border-b border-[#DAD4C6] bg-[#F8F6F1] flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h2 className="text-base font-bold text-black">
                   Paid Website Marketing Orders
                 </h2>
                 <p className="text-xs text-black">
-                  Track billing status, allocated ad budgets, channels, and active campaign states.
+                  Manage billing status, UTM attribution performance, attached AI ad kits, and active campaign states.
                 </p>
               </div>
-              <button
-                type="button"
-                onClick={() => setSubTab('launch')}
-                className="px-3 py-1.5 rounded-lg bg-[#1D4ED8] hover:bg-[#163B9E] text-white text-xs font-semibold cursor-pointer"
-              >
-                + New Campaign Order
-              </button>
+              <div className="flex flex-wrap items-center gap-2">
+                <div className="relative">
+                  <Search className="w-3.5 h-3.5 text-black absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" />
+                  <input
+                    type="text"
+                    value={orderSearch}
+                    onChange={(e) => setOrderSearch(e.target.value)}
+                    placeholder="Filter orders..."
+                    className="pl-8 pr-3 py-1.5 rounded-lg border border-[#DAD4C6] bg-white text-xs text-black placeholder:text-black/60 w-44"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setSubTab('launch')}
+                  className="px-3 py-1.5 rounded-lg bg-[#1D4ED8] hover:bg-[#163B9E] text-white text-xs font-semibold cursor-pointer whitespace-nowrap"
+                >
+                  + New Campaign Order
+                </button>
+              </div>
             </div>
 
-            {orders.length === 0 ? (
-              <div className="p-10 text-center text-sm text-black">
-                No marketing orders yet. Select a package in &ldquo;Pay &amp; Launch Campaign&rdquo; to create your first paid website promotion order.
+            {/* Status Filter Bar */}
+            <div className="px-6 py-2.5 border-b border-[#DAD4C6] bg-white flex flex-wrap items-center gap-1">
+              {(
+                [
+                  ['all', 'All'],
+                  ['pending_payment', 'Pending'],
+                  ['paid', 'Paid'],
+                  ['active', 'Live'],
+                  ['paused', 'Paused'],
+                  ['completed', 'Completed'],
+                ] as Array<[OrderStatusFilter, string]>
+              ).map(([st, label]) => (
+                <button
+                  key={st}
+                  type="button"
+                  onClick={() => setStatusFilter(st)}
+                  className={`px-2.5 py-1 rounded-md text-xs font-semibold cursor-pointer transition-colors ${
+                    statusFilter === st
+                      ? 'bg-[#13151A] text-white'
+                      : 'text-black hover:bg-[#EAE6DC]'
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+
+            {filteredOrders.length === 0 ? (
+              <div className="p-10 text-center space-y-2">
+                <p className="text-sm font-semibold text-black">
+                  {orders.length === 0
+                    ? 'No marketing orders yet'
+                    : 'No campaign orders match the current filter'}
+                </p>
+                <p className="text-xs text-black">
+                  {orders.length === 0
+                    ? 'Select a package in "Pay & Launch" to create your first paid website promotion order.'
+                    : 'Clear search or switch status filter to see all orders.'}
+                </p>
               </div>
             ) : (
               <div className="divide-y divide-[#DAD4C6]">
-                {orders.map((order) => (
-                  <div
-                    key={order.id}
-                    className="p-5 flex flex-wrap items-start justify-between gap-4 hover:bg-[#FAF9F5]/60"
-                  >
-                    <div className="space-y-1.5 min-w-0 flex-1">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <span className="text-base font-bold text-black">
-                          {order.siteName}
-                        </span>
-                        <span className="font-mono text-xs px-2 py-0.5 rounded bg-[#EAE6DC] text-black">
-                          /sites/{order.siteSlug}
-                        </span>
-                        <span
-                          className={`text-xs font-semibold px-2.5 py-0.5 rounded ${
-                            order.status === 'active'
-                              ? 'bg-emerald-100 text-emerald-900'
-                              : order.status === 'paid'
-                              ? 'bg-blue-100 text-blue-900'
-                              : order.status === 'pending_payment'
-                              ? 'bg-amber-100 text-amber-900'
-                              : 'bg-[#EAE6DC] text-black'
-                          }`}
-                        >
-                          {formatStatusLabel(order.status)}
-                        </span>
-                      </div>
+                {filteredOrders.map((order) => {
+                  const attr = getOrderAttribution(order);
+                  const orderUtmUrl = buildOrderTrackedUrl(order);
+                  const kitExpanded = expandedOrderKitId === order.id;
 
-                      <div className="text-sm text-black">
-                        <strong>{order.packageName}</strong> · Billing:{' '}
-                        <span className="font-mono">{order.customerEmail}</span> · Goal:{' '}
-                        {order.campaignGoal}
-                      </div>
+                  return (
+                    <div key={order.id} className="p-5 hover:bg-[#FAF9F5]/60 space-y-3">
+                      <div className="flex flex-wrap items-start justify-between gap-4">
+                        <div className="space-y-1.5 min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2 text-sm text-black">
+                            <span className="text-base font-bold text-black">
+                              {order.siteName}
+                            </span>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-mono text-xs">
+                              /sites/{order.siteSlug}
+                            </span>
+                            <span aria-hidden="true">·</span>
+                            <span
+                              className={`text-xs font-semibold ${
+                                order.status === 'active'
+                                  ? 'text-emerald-700'
+                                  : order.status === 'paid'
+                                  ? 'text-[#1D4ED8]'
+                                  : order.status === 'pending_payment'
+                                  ? 'text-[#B45309]'
+                                  : 'text-black'
+                              }`}
+                            >
+                              {formatStatusLabel(order.status)}
+                            </span>
+                          </div>
 
-                      <div className="text-xs text-black flex flex-wrap items-center gap-3">
-                        <span>
-                          Channels: <strong>{order.channels.join(', ')}</strong>
-                        </span>
-                        <span>·</span>
-                        <span className="font-mono">
-                          UTM: {order.utmCampaign}
-                        </span>
-                        <span>·</span>
-                        <span>
-                          Created {new Date(order.createdAt).toLocaleDateString()}
-                        </span>
-                      </div>
-                    </div>
+                          <div className="text-sm text-black">
+                            <strong>{order.packageName}</strong>
+                            <span aria-hidden="true"> · </span>
+                            <span className="font-mono text-xs">
+                              {order.customerEmail}
+                            </span>
+                            <span aria-hidden="true"> · </span>
+                            <span>{order.campaignGoal}</span>
+                          </div>
 
-                    <div className="flex flex-col items-end gap-2 shrink-0">
-                      <div className="text-right">
-                        <div className="text-lg font-bold font-mono text-black tabular-nums">
-                          ${order.totalUsd.toLocaleString()}
+                          <div className="text-xs text-black flex flex-wrap items-center gap-2 tabular-nums">
+                            <span>
+                              Channels: <strong>{order.channels.join(', ')}</strong>
+                            </span>
+                            <span aria-hidden="true">·</span>
+                            <span className="font-mono">
+                              UTM: {order.utmCampaign}
+                            </span>
+                            <span aria-hidden="true">·</span>
+                            <span>
+                              Attributed Visits: <strong>{attr.utmVisits}</strong> (Site Views:{' '}
+                              {attr.siteViews}, Leads: {attr.siteLeads})
+                            </span>
+                            <span aria-hidden="true">·</span>
+                            <span>
+                              {new Date(order.createdAt).toLocaleDateString()}
+                            </span>
+                          </div>
                         </div>
-                        <div className="text-xs text-black font-mono tabular-nums">
-                          Fee ${order.serviceFeeUsd} + Ad Spend ${order.adBudgetUsd}
+
+                        <div className="flex flex-col items-end gap-2 shrink-0">
+                          <div className="text-right">
+                            <div className="text-lg font-bold font-mono text-black tabular-nums">
+                              ${order.totalUsd.toLocaleString()}
+                            </div>
+                            <div className="text-xs text-black font-mono tabular-nums">
+                              Fee ${order.serviceFeeUsd} + Ad Spend $
+                              {order.adBudgetUsd}
+                            </div>
+                          </div>
+
+                          <div className="flex flex-wrap items-center gap-1.5">
+                            <button
+                              type="button"
+                              onClick={() =>
+                                copyText(
+                                  orderUtmUrl,
+                                  `order-utm-${order.id}`,
+                                  'Order UTM tracking link copied.'
+                                )
+                              }
+                              className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-[#DAD4C6] bg-white hover:bg-[#FAF9F5] text-black text-xs font-semibold cursor-pointer"
+                            >
+                              {copiedKey === `order-utm-${order.id}` ? (
+                                <Check className="w-3 h-3 text-emerald-700" />
+                              ) : (
+                                <Link2 className="w-3 h-3 text-[#1D4ED8]" />
+                              )}
+                              <span>
+                                {copiedKey === `order-utm-${order.id}`
+                                  ? 'Copied Link'
+                                  : 'Copy UTM'}
+                              </span>
+                            </button>
+
+                            {order.generatedKit && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  setExpandedOrderKitId(
+                                    kitExpanded ? null : order.id
+                                  )
+                                }
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-[#DAD4C6] bg-white hover:bg-[#FAF9F5] text-black text-xs font-semibold cursor-pointer"
+                              >
+                                <span>Ad Kit</span>
+                                {kitExpanded ? (
+                                  <ChevronUp className="w-3 h-3" />
+                                ) : (
+                                  <ChevronDown className="w-3 h-3" />
+                                )}
+                              </button>
+                            )}
+
+                            {order.status === 'pending_payment' && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleOrderStatusChange(order.id, 'paid')
+                                }
+                                className="px-2.5 py-1 rounded bg-[#13151A] hover:bg-black text-white text-xs font-semibold cursor-pointer"
+                              >
+                                Mark Paid
+                              </button>
+                            )}
+                            {(order.status === 'paid' ||
+                              order.status === 'paused') && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleOrderStatusChange(order.id, 'active')
+                                }
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[#1D4ED8] hover:bg-[#163B9E] text-white text-xs font-semibold cursor-pointer"
+                              >
+                                <Play className="w-3 h-3" />
+                                <span>Activate</span>
+                              </button>
+                            )}
+                            {order.status === 'active' && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleOrderStatusChange(order.id, 'paused')
+                                }
+                                className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-[#DAD4C6] bg-white hover:bg-[#FAF9F5] text-black text-xs font-semibold cursor-pointer"
+                              >
+                                <Pause className="w-3 h-3" />
+                                <span>Pause</span>
+                              </button>
+                            )}
+                            {order.status !== 'completed' && (
+                              <button
+                                type="button"
+                                onClick={() =>
+                                  handleOrderStatusChange(order.id, 'completed')
+                                }
+                                className="px-2.5 py-1 rounded border border-[#DAD4C6] bg-white hover:bg-[#FAF9F5] text-black text-xs font-semibold cursor-pointer"
+                              >
+                                Complete
+                              </button>
+                            )}
+                            <button
+                              type="button"
+                              title="Delete order"
+                              aria-label="Delete campaign order"
+                              onClick={() => handleDeleteOrder(order.id)}
+                              className="p-1.5 rounded border border-[#DAD4C6] bg-white hover:bg-red-50 hover:text-red-700 text-black cursor-pointer"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
                         </div>
                       </div>
 
-                      <div className="flex flex-wrap items-center gap-1.5">
-                        {order.status === 'pending_payment' && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleOrderStatusChange(order.id, 'paid')
-                            }
-                            className="px-2.5 py-1 rounded bg-[#13151A] hover:bg-black text-white text-xs font-semibold cursor-pointer"
-                          >
-                            Mark Paid
-                          </button>
-                        )}
-                        {(order.status === 'paid' || order.status === 'paused') && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleOrderStatusChange(order.id, 'active')
-                            }
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded bg-[#1D4ED8] hover:bg-[#163B9E] text-white text-xs font-semibold cursor-pointer"
-                          >
-                            <Play className="w-3 h-3" />
-                            <span>Activate</span>
-                          </button>
-                        )}
-                        {order.status === 'active' && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleOrderStatusChange(order.id, 'paused')
-                            }
-                            className="inline-flex items-center gap-1 px-2.5 py-1 rounded border border-[#DAD4C6] bg-white hover:bg-[#FAF9F5] text-black text-xs font-semibold cursor-pointer"
-                          >
-                            <Pause className="w-3 h-3" />
-                            <span>Pause</span>
-                          </button>
-                        )}
-                        {order.status !== 'completed' && (
-                          <button
-                            type="button"
-                            onClick={() =>
-                              handleOrderStatusChange(order.id, 'completed')
-                            }
-                            className="px-2.5 py-1 rounded border border-[#DAD4C6] bg-white hover:bg-[#FAF9F5] text-black text-xs font-semibold cursor-pointer"
-                          >
-                            Complete
-                          </button>
-                        )}
-                      </div>
+                      {kitExpanded && order.generatedKit && (
+                        <div className="p-4 rounded-lg border border-[#DAD4C6] bg-[#FAF9F5] grid grid-cols-1 md:grid-cols-3 gap-4 text-xs text-black">
+                          <div className="space-y-1">
+                            <div className="font-bold">Google Search Headlines</div>
+                            {order.generatedKit.googleSearchAd.headlines.map(
+                              (h, idx) => (
+                                <div key={idx} className="text-[#1D4ED8] font-medium">
+                                  {h}
+                                </div>
+                              )
+                            )}
+                          </div>
+                          <div className="space-y-1">
+                            <div className="font-bold">Meta Social Ad</div>
+                            <div className="font-semibold">
+                              {order.generatedKit.metaSocialAd.headline}
+                            </div>
+                            <p className="leading-relaxed">
+                              {order.generatedKit.metaSocialAd.primaryText}
+                            </p>
+                          </div>
+                          <div className="space-y-1">
+                            <div className="font-bold">Email Broadcast Subject</div>
+                            <div className="font-semibold">
+                              {order.generatedKit.emailBroadcast.subject}
+                            </div>
+                            <div className="pt-1 font-mono">
+                              Keywords:{' '}
+                              {order.generatedKit.targetKeywords
+                                .slice(0, 5)
+                                .join(', ')}
+                            </div>
+                          </div>
+                        </div>
+                      )}
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>

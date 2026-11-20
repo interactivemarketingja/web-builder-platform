@@ -10,6 +10,7 @@ import {
   createMarketingOrder,
   deleteDeploymentBySlug,
   deleteLeadSubmission,
+  deleteMarketingOrder,
   getAnalyticsData,
   getDeploymentByDomain,
   getDeploymentBySlug,
@@ -132,8 +133,12 @@ function extractReferrerHost(referer?: string): string {
 function extractAttribution(req: express.Request): string {
   const utmSource = String(req.query?.utm_source || '').trim().slice(0, 40);
   const utmCampaign = String(req.query?.utm_campaign || '').trim().slice(0, 48);
-  if (utmSource) {
-    return utmCampaign ? `utm:${utmSource}/${utmCampaign}` : `utm:${utmSource}`;
+  if (utmSource || utmCampaign) {
+    return utmSource && utmCampaign
+      ? `utm:${utmSource}/${utmCampaign}`
+      : utmSource
+      ? `utm:${utmSource}`
+      : `utm:campaign/${utmCampaign}`;
   }
   return extractReferrerHost(req.headers.referer);
 }
@@ -1464,6 +1469,18 @@ Return ONLY valid JSON with keys: "label" (string), "backgroundVariant" ("canvas
     }
   });
 
+  app.delete('/api/marketing/orders/:id', async (req, res) => {
+    try {
+      const id = String(req.params.id || '').slice(0, 80);
+      await deleteMarketingOrder(id);
+      res.json({ ok: true, id });
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'Failed to delete campaign order.';
+      res.status(500).json({ error: message });
+    }
+  });
+
   app.post('/api/marketing/generate-kit', async (req, res) => {
     const clientIp = req.ip || 'local';
     if (!checkRateLimit(`mkt:${clientIp}`, 20, 60_000)) {
@@ -1478,6 +1495,8 @@ Return ONLY valid JSON with keys: "label" (string), "backgroundVariant" ("canvas
       const siteDescription = String(req.body?.siteDescription || '').trim();
       const targetAudience = String(req.body?.targetAudience || '').trim();
       const campaignGoal = String(req.body?.campaignGoal || 'Leads & Inquiries').trim();
+      const tone = String(req.body?.tone || 'Direct & Authoritative').trim();
+      const offer = String(req.body?.offer || '').trim();
       const channels = Array.isArray(req.body?.channels) ? req.body.channels : [];
       const highlights = String(req.body?.highlights || '').trim();
 
@@ -1495,10 +1514,12 @@ Description: ${siteDescription}
 Key Highlights from Page Sections: ${highlights || 'N/A'}
 Target Audience: ${targetAudience || 'Decision makers & prospective customers'}
 Primary Goal: ${campaignGoal}
+Campaign Tone & Angle: ${tone}
+Key Offer or Hook: ${offer || 'Book a consultation or explore our offerings'}
 Selected Channels: ${channels.join(', ') || 'Google Search, Meta, LinkedIn, Email'}`,
         config: {
           systemInstruction: `You are a senior growth marketing strategist and performance copywriter.
-Write specific, grounded, high-converting ad copy tailored directly to the website details.
+Write specific, grounded, high-converting ad copy tailored directly to the website details and requested tone (${tone}).
 Rules:
 - Google Search ad headlines must each be concise (under 30 characters). Descriptions under 90 characters.
 - Avoid generic hype ("revolutionize", "unlock the future", "game-changer").

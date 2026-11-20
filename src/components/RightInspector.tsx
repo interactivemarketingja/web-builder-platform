@@ -8,6 +8,7 @@ import {
   GripVertical,
   Layers,
   Link2,
+  Megaphone,
   Plus,
   SlidersHorizontal,
   Sparkles,
@@ -36,6 +37,7 @@ interface RightInspectorProps {
   onRefineBlock: (block: SiteBlock, instruction: string) => Promise<void>;
   onDeleteBlock: (id: string) => void;
   onUpdateSeo: (patch: Partial<SiteSeo>) => void;
+  onOpenMarketing?: () => void;
 }
 
 function TextInput({
@@ -157,6 +159,7 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
   onRefineBlock,
   onDeleteBlock,
   onUpdateSeo,
+  onOpenMarketing,
 }) => {
   const [activeTab, setActiveTab] = useState<RightInspectorTab>('inspector');
   const [refinePrompt, setRefinePrompt] = useState('');
@@ -247,7 +250,7 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
         <div className="flex-1 overflow-y-auto studio-scroll p-4 space-y-5">
           {/* Live Search Engine Snippet Preview */}
           <div className="p-3.5 rounded-lg border border-[#DAD4C6] bg-[#FAF9F5] space-y-1.5">
-            <div className="text-xs font-semibold uppercase tracking-wide text-black">
+            <div className="text-xs font-semibold text-black">
               Search Snippet Preview
             </div>
             <div className="text-xs text-black truncate font-mono">
@@ -474,6 +477,17 @@ export const RightInspector: React.FC<RightInspectorProps> = ({
               }`}
             </pre>
           </div>
+
+          {onOpenMarketing && (
+            <button
+              type="button"
+              onClick={onOpenMarketing}
+              className="w-full py-2.5 px-3 rounded-lg border border-[#DAD4C6] bg-[#FAF9F5] hover:bg-white hover:border-[#1D4ED8] text-xs font-semibold text-black flex items-center justify-center gap-2 cursor-pointer transition-colors"
+            >
+              <Megaphone className="w-3.5 h-3.5 text-[#1D4ED8]" />
+              <span>Configure Pixels, Promo Bar &amp; Paid Ads</span>
+            </button>
+          )}
         </div>
       </aside>
     );

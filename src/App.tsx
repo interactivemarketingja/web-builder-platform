@@ -4,6 +4,7 @@ import {
   Check,
   Code2,
   CreditCard,
+  ExternalLink,
   Eye,
   LayoutTemplate,
   Megaphone,
@@ -140,6 +141,14 @@ export default function App() {
   const [initialPreviewTemplate, setInitialPreviewTemplate] = useState<SiteProject | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [savedNotice, setSavedNotice] = useState(false);
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
+
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => {
+      setToastMessage((prev) => (prev === msg ? null : prev));
+    }, 2600);
+  };
 
   // Load saved client projects from backend (Supabase or server disk store)
   useEffect(() => {
@@ -633,11 +642,11 @@ export default function App() {
                 slug: slugify(e.target.value),
               }))
             }
-            className="text-sm font-medium text-black bg-[#FAF9F5] hover:bg-[#EAE6DC]/60 focus:bg-white border border-transparent focus:border-[#DAD4C6] rounded-md px-2.5 py-1 max-w-[230px] truncate focus:outline-none"
+            className="text-sm font-medium text-black bg-[#FAF9F5] hover:bg-[#EAE6DC]/60 focus:bg-white border border-transparent focus:border-[#DAD4C6] rounded-md px-2.5 py-1 max-w-[175px] xl:max-w-[220px] truncate focus:outline-none"
           />
         </div>
 
-        {/* Zone 2: Studio Mode & Responsive Viewport Controls */}
+        {/* Zone 2: Studio Mode Controls */}
         <div className="flex items-center gap-3 shrink-0">
           <div className="flex items-center gap-1 p-1 bg-[#EAE6DC] rounded-lg border border-[#DAD4C6]/70">
             <button
@@ -713,50 +722,6 @@ export default function App() {
               <span>Pricing</span>
             </button>
           </div>
-
-          {(studioView === 'builder' || studioView === 'preview') && (
-            <div className="hidden lg:flex items-center gap-1 p-1 bg-[#EAE6DC] rounded-lg border border-[#DAD4C6]/70">
-              <button
-                type="button"
-                onClick={() => setViewport('desktop')}
-                title="Desktop 1440px"
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                  viewport === 'desktop'
-                    ? 'bg-white text-black shadow-xs'
-                    : 'text-black hover:bg-white/60'
-                }`}
-              >
-                <Monitor className="w-4 h-4" />
-                <span className="font-mono text-xs tabular-nums">1440</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewport('tablet')}
-                title="Tablet 768px"
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                  viewport === 'tablet'
-                    ? 'bg-white text-black shadow-xs'
-                    : 'text-black hover:bg-white/60'
-                }`}
-              >
-                <Tablet className="w-4 h-4" />
-                <span className="font-mono text-xs tabular-nums">768</span>
-              </button>
-              <button
-                type="button"
-                onClick={() => setViewport('mobile')}
-                title="Mobile 375px"
-                className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-md text-sm font-medium whitespace-nowrap transition-colors cursor-pointer ${
-                  viewport === 'mobile'
-                    ? 'bg-white text-black shadow-xs'
-                    : 'text-black hover:bg-white/60'
-                }`}
-              >
-                <Smartphone className="w-4 h-4" />
-                <span className="font-mono text-xs tabular-nums">375</span>
-              </button>
-            </div>
-          )}
         </div>
 
         {/* Zone 3: Primary Actions */}
@@ -840,26 +805,75 @@ export default function App() {
               {/* Canvas Context Strip */}
               <div
                 onClick={(e) => e.stopPropagation()}
-                className="w-full mb-3.5 px-4 py-2.5 bg-white/95 border border-[#DAD4C6] rounded-lg flex flex-wrap items-center justify-between gap-3 shadow-xs"
+                className="w-full mb-3.5 px-4 py-2 bg-white/95 border border-[#DAD4C6] rounded-lg flex flex-wrap items-center justify-between gap-3 shadow-xs"
                 style={{
                   maxWidth: viewport === 'desktop' ? '1220px' : viewportWidthPx,
                 }}
               >
-                <div className="flex items-center gap-3 min-w-0 text-sm text-black">
-                  <span className="font-mono text-xs font-semibold truncate">
-                    /sites/{project.slug || 'site'}
-                  </span>
+                <div className="flex items-center gap-2.5 min-w-0 text-sm text-black">
+                  {project.lastDeployedUrl ? (
+                    <a
+                      href={project.lastDeployedUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                      className="inline-flex items-center gap-1 font-mono text-xs font-semibold text-[#1D4ED8] hover:underline truncate"
+                    >
+                      <span>/sites/{project.lastDeployedSlug || project.slug}</span>
+                      <ExternalLink className="w-3 h-3 shrink-0" />
+                    </a>
+                  ) : (
+                    <span className="font-mono text-xs font-semibold truncate">
+                      /sites/{project.slug || 'site'}
+                    </span>
+                  )}
                   <span aria-hidden="true">·</span>
-                  <span className="tabular-nums font-medium whitespace-nowrap">
+                  <span className="tabular-nums text-xs font-medium whitespace-nowrap">
                     {project.blocks.length} sections
-                  </span>
-                  <span aria-hidden="true" className="hidden sm:inline">·</span>
-                  <span className="hidden sm:inline font-mono text-xs tabular-nums">
-                    {viewport === 'desktop' ? '1440px' : viewport === 'tablet' ? '768px' : '375px'}
                   </span>
                 </div>
 
-                <div className="flex items-center gap-2 shrink-0">
+                <div className="flex flex-wrap items-center gap-2 shrink-0">
+                  <div className="flex items-center gap-0.5 p-0.5 bg-[#EAE6DC] rounded-md border border-[#DAD4C6]/70">
+                    <button
+                      type="button"
+                      onClick={() => setViewport('desktop')}
+                      title="Desktop 1440px"
+                      className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                        viewport === 'desktop'
+                          ? 'bg-white text-black shadow-xs'
+                          : 'text-black hover:bg-white/60'
+                      }`}
+                    >
+                      <Monitor className="w-3.5 h-3.5" />
+                      <span className="font-mono tabular-nums">1440</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewport('tablet')}
+                      title="Tablet 768px"
+                      className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                        viewport === 'tablet'
+                          ? 'bg-white text-black shadow-xs'
+                          : 'text-black hover:bg-white/60'
+                      }`}
+                    >
+                      <Tablet className="w-3.5 h-3.5" />
+                      <span className="font-mono tabular-nums">768</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setViewport('mobile')}
+                      title="Mobile 375px"
+                      className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium whitespace-nowrap transition-colors cursor-pointer ${
+                        viewport === 'mobile'
+                          ? 'bg-white text-black shadow-xs'
+                          : 'text-black hover:bg-white/60'
+                      }`}
+                    >
+                      <Smartphone className="w-3.5 h-3.5" />
+                      <span className="font-mono tabular-nums">375</span>
+                    </button>
+                  </div>
                   <button
                     type="button"
                     onClick={() => {
@@ -912,6 +926,43 @@ export default function App() {
                   maxWidth: viewport === 'desktop' ? '1220px' : viewportWidthPx,
                 }}
               >
+                {/* Live Marketing Promo Bar Preview on Canvas */}
+                {project.marketing?.announcementEnabled &&
+                  project.marketing?.announcementText?.trim() && (
+                    <div
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setStudioView('marketing');
+                      }}
+                      title="Click to edit Promotional Banner in Marketing"
+                      className="group/promo relative px-6 py-2.5 flex flex-wrap items-center justify-center gap-3 text-center cursor-pointer border-b border-white/15"
+                      style={{
+                        backgroundColor: project.theme.contrastBgColor,
+                        color: '#FFFFFF',
+                        fontFamily: `"${project.theme.bodyFont}", system-ui, sans-serif`,
+                      }}
+                    >
+                      <span className="text-sm font-medium">
+                        {project.marketing.announcementText.trim()}
+                      </span>
+                      {project.marketing.announcementCtaLabel?.trim() && (
+                        <span
+                          className="px-3 py-1 text-xs font-semibold whitespace-nowrap"
+                          style={{
+                            backgroundColor: project.theme.primaryColor,
+                            color: project.theme.accentTextColor,
+                            borderRadius: project.theme.radius,
+                          }}
+                        >
+                          {project.marketing.announcementCtaLabel.trim()}
+                        </span>
+                      )}
+                      <span className="hidden sm:inline-flex items-center gap-1 text-[11px] font-semibold px-2 py-0.5 rounded bg-white/15 text-white opacity-0 group-hover/promo:opacity-100 transition-opacity">
+                        <Megaphone className="w-3 h-3" />
+                        <span>Edit Banner</span>
+                      </span>
+                    </div>
+                  )}
                 {isGenerating && (
                   <div className="absolute inset-0 z-30 bg-white/90 backdrop-blur-xs flex flex-col items-center justify-center p-8 text-center">
                     <div className="w-10 h-10 rounded-lg bg-[#13151A] text-white flex items-center justify-center mb-3 animate-pulse">
@@ -1125,14 +1176,81 @@ export default function App() {
                   seo: { ...prev.seo, ...patch },
                 }))
               }
+              onOpenMarketing={() => setStudioView('marketing')}
             />
           </>
         )}
 
         {studioView === 'preview' && (
-          <main className="flex-1 overflow-auto canvas-drafting-grid p-6 lg:p-8 flex flex-col items-center">
+          <main className="flex-1 overflow-auto canvas-drafting-grid p-5 lg:p-7 flex flex-col items-center">
             <div
-              className="flex-1 w-full bg-white border border-slate-300 rounded-lg shadow-sm overflow-hidden transition-all duration-200 flex flex-col"
+              className="w-full mb-3.5 px-4 py-2 bg-white/95 border border-[#DAD4C6] rounded-lg flex flex-wrap items-center justify-between gap-3 shadow-xs"
+              style={{
+                maxWidth: viewport === 'desktop' ? '1440px' : viewportWidthPx,
+              }}
+            >
+              <div className="flex items-center gap-2.5 text-xs font-mono text-black">
+                <span className="font-semibold">Live Interactive Preview</span>
+                <span aria-hidden="true">·</span>
+                <span>{project.name}</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="flex items-center gap-0.5 p-0.5 bg-[#EAE6DC] rounded-md border border-[#DAD4C6]/70">
+                  <button
+                    type="button"
+                    onClick={() => setViewport('desktop')}
+                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium cursor-pointer ${
+                      viewport === 'desktop'
+                        ? 'bg-white text-black shadow-xs'
+                        : 'text-black hover:bg-white/60'
+                    }`}
+                  >
+                    <Monitor className="w-3.5 h-3.5" />
+                    <span className="font-mono tabular-nums">1440</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewport('tablet')}
+                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium cursor-pointer ${
+                      viewport === 'tablet'
+                        ? 'bg-white text-black shadow-xs'
+                        : 'text-black hover:bg-white/60'
+                    }`}
+                  >
+                    <Tablet className="w-3.5 h-3.5" />
+                    <span className="font-mono tabular-nums">768</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewport('mobile')}
+                    className={`flex items-center gap-1 px-2 py-1 rounded text-xs font-medium cursor-pointer ${
+                      viewport === 'mobile'
+                        ? 'bg-white text-black shadow-xs'
+                        : 'text-black hover:bg-white/60'
+                    }`}
+                  >
+                    <Smartphone className="w-3.5 h-3.5" />
+                    <span className="font-mono tabular-nums">375</span>
+                  </button>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setStudioView('marketing')}
+                  className="px-2.5 py-1 rounded-md border border-[#DAD4C6] bg-[#FAF9F5] hover:bg-white text-xs font-semibold text-black cursor-pointer whitespace-nowrap"
+                >
+                  Promote Site
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setStudioView('builder')}
+                  className="px-2.5 py-1 rounded-md bg-[#13151A] hover:bg-black text-white text-xs font-semibold cursor-pointer whitespace-nowrap"
+                >
+                  Edit in Builder
+                </button>
+              </div>
+            </div>
+            <div
+              className="flex-1 w-full bg-white border border-[#C8C1B2] rounded-lg shadow-sm overflow-hidden transition-all duration-200 flex flex-col"
               style={{
                 maxWidth: viewport === 'desktop' ? '1440px' : viewportWidthPx,
                 minHeight: '640px',
@@ -1171,6 +1289,7 @@ export default function App() {
               }))
             }
             onOpenDeploy={() => setDeployModalOpen(true)}
+            onNotify={showToast}
             initialSessionId={marketingSessionId}
             onClearSessionParam={() => {
               setMarketingSessionId(null);
@@ -1224,6 +1343,17 @@ export default function App() {
           }))
         }
       />
+
+      {toastMessage && (
+        <div
+          role="status"
+          aria-live="polite"
+          className="fixed bottom-5 right-5 z-50 px-4 py-2.5 rounded-lg bg-[#13151A] text-white text-sm font-medium shadow-lg border border-white/15 flex items-center gap-2"
+        >
+          <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
     </div>
   );
 }

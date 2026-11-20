@@ -998,3 +998,18 @@ export async function updateMarketingOrder(
   return updated;
 }
 
+export async function deleteMarketingOrder(id: string): Promise<boolean> {
+  const sb = getSupabaseClient();
+  if (sb) {
+    const { error } = await sb.from('af_marketing_orders').delete().eq('id', id);
+    if (error) throw new Error(`Supabase deleteMarketingOrder failed: ${error.message}`);
+    return true;
+  }
+
+  const store = readLocalStore();
+  const prevLen = store.marketingOrders.length;
+  store.marketingOrders = store.marketingOrders.filter((o) => o.id !== id);
+  if (store.marketingOrders.length === prevLen) return false;
+  writeLocalStore(store);
+  return true;
+}

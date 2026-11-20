@@ -231,6 +231,8 @@ export interface SiteMarketingConfig {
   announcementText?: string;
   announcementCtaLabel?: string;
   announcementCtaHref?: string;
+  campaignTone?: string;
+  savedKit?: MarketingAdKit | null;
 }
 
 export interface SiteProject {
